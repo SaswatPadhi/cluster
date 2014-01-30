@@ -20,7 +20,7 @@ const (
 func ClusterSetup(t *testing.T) []*Server {
 	data, err := ioutil.ReadFile(CONFIG_FILE)
 	if err != nil {
-		t.Fatal("[X] " + IO_ERROR_CONFIG + "(" + CONFIG_FILE + ")")
+		t.Fatal(err.Error())
 	}
 
 	servers := make([]*Server, 0, bytes.Count(data, []byte{10})+1)
@@ -30,13 +30,12 @@ func ClusterSetup(t *testing.T) []*Server {
 		if err := decoder.Decode(&p); err == io.EOF {
 			break
 		} else if err != nil {
-			t.Error("[!] " + err.Error())
+			t.Error(err)
 		}
 
-		t.Logf("[+] Setting up server instance [%d] @ %s.\n", p.Pid, p.Addr)
 		server, err := NewServer(p.Pid, CONFIG_FILE)
 		if err != nil {
-			t.Error("[!] " + err.Error())
+			t.Error(err)
 		} else {
 			servers = append(servers, server)
 		}
@@ -48,7 +47,6 @@ func ClusterSetup(t *testing.T) []*Server {
 // Brings down a cluster consisting of the slice of servers provided.
 func ClusterTearDown(t *testing.T, servers []*Server) {
 	for _, server := range servers {
-		t.Logf("[-] Destroying server instance [%d] @ %s.\n", server.pid, server.addr)
 		server.Stop()
 	}
 }
@@ -90,12 +88,22 @@ func Test_ClusterBroadcast(t *testing.T) {
 
 	rand.Seed(101)
 	env_broadcast_1_id := rand.Intn(len(servers))
-	env_expected_1 := Envelope{servers[env_broadcast_1_id].pid, 0, GenerateUUID()}
+	env_broadcast_1_msg, err := GenerateUUID()
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+
+	env_expected_1 := Envelope{servers[env_broadcast_1_id].pid, 0, env_broadcast_1_msg}
 	env_broadcast_1 := env_expected_1
 	env_broadcast_1.Pid = BROADCAST
 
 	env_broadcast_2_id := rand.Intn(len(servers))
-	env_expected_2 := Envelope{servers[env_broadcast_2_id].pid, 0, GenerateUUID()}
+	env_broadcast_2_msg, err := GenerateUUID()
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+
+	env_expected_2 := Envelope{servers[env_broadcast_2_id].pid, 0, env_broadcast_2_msg}
 	env_broadcast_2 := env_expected_2
 	env_broadcast_2.Pid = BROADCAST
 
@@ -125,7 +133,7 @@ func Test_ClusterBroadcast(t *testing.T) {
 					t.Errorf("[!] Unexpected envelope %s was received at server [%d]!\n", envelope, server.pid)
 				}
 			case <-time.After(5 * time.Second):
-				t.Errorf("[!] Time out waiting for broadcast envelopes at server [%d]. Status = %s, %s.\n", server.pid, env_1_rvcd, env_2_rcvd)
+				t.Errorf("[!] Time out waiting for broadcast envelopes at server [%d]. Status = %t, %t.\n", server.pid, env_1_rvcd, env_2_rcvd)
 			}
 		}
 	}

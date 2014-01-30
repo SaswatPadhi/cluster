@@ -8,7 +8,6 @@ import (
 	"io/ioutil"
 
 	"bytes"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -20,10 +19,9 @@ const (
 	BROADCAST = -1
 
 	// Error messages
-	BAD_JSON_CONFIG = "JSON Decode failed on the config file."
-	INVALID_SELF_ID = "The server's pid was not found in the config file."
-	IO_ERROR_CONFIG = "Unable to locate config file."
-	IP_BIND_FAILURE = "Could not bind to the specified address."
+	INVALID_SELF_ID = "Server's pid missing in the config file."
+	INVALID_PEER_ID = "Target pid missing in the config file."
+	UNMARSHAL_ERROR = "Could not unmarshal incoming envelope."
 )
 
 // Envelope represents a unit message that can be exchanged between servers.
@@ -41,11 +39,13 @@ type Envelope struct {
 type peer struct {
 	Pid  int
 	Addr string
+	sock *zmq.Socket
 }
 
 // ServerI is an interface that a Server object must provide.
 type ServerI interface {
 	Pid() int
+	Stop()
 	Peers() []int
 	Inbox() chan *Envelope
 	Outbox() chan *Envelope
@@ -68,14 +68,20 @@ type Server struct {
 // Generates a Version 4 (pseudo-random) UUID (Universally Unique Identifier).
 // This function is used to generate unique an terminate_code for a server and
 // may be used for tests.
-// TODO: Error handling!
-func GenerateUUID() string {
-	dev_rand, _ := os.Open("/dev/urandom")
+func GenerateUUID() (string, error) {
+	dev_rand, err := os.Open("/dev/urandom")
+	if err != nil {
+		return "", err
+	}
+
 	rand_bytes := make([]byte, 16)
-	dev_rand.Read(rand_bytes)
-	dev_rand.Close()
+	if _, err = dev_rand.Read(rand_bytes); err != nil {
+		return "", err
+	}
+
 	return fmt.Sprintf("%x-%x-4%x-b%x-%x", rand_bytes[0:4], rand_bytes[4:6],
-		rand_bytes[6:8], rand_bytes[8:10], rand_bytes[10:])
+			rand_bytes[6:8], rand_bytes[8:10], rand_bytes[10:]),
+		dev_rand.Close()
 }
 
 // NewServer creates and returns a new Server object with the provided id and
@@ -90,11 +96,10 @@ func NewServer(id int, config string) (*Server, error) {
 	s.inbox = make(chan *Envelope)
 	s.outbox = make(chan *Envelope)
 	s.stopped = make(chan bool)
-	s.terminate_code = GenerateUUID()
 
 	data, err := ioutil.ReadFile(config)
 	if err != nil {
-		return nil, errors.New(IO_ERROR_CONFIG + err.Error())
+		return nil, err
 	}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -103,65 +108,60 @@ func NewServer(id int, config string) (*Server, error) {
 		if err := decoder.Decode(&p); err == io.EOF {
 			break
 		} else if err != nil {
-			return nil, errors.New(BAD_JSON_CONFIG + err.Error())
+			return nil, err
 		} else if p.Pid == s.pid {
 			s.addr = p.Addr
 			continue
 		}
+		if p.sock, err = zmq.NewSocket(zmq.PUSH); err != nil {
+			return nil, err
+		}
+		p.sock.Connect("tcp://" + p.Addr)
 		s.peers[p.Pid] = p
 	}
 
 	if len(s.addr) == 0 {
-		return nil, errors.New(INVALID_SELF_ID)
+		return nil, fmt.Errorf(INVALID_SELF_ID)
 	}
 
-	sock, _ := zmq.NewSocket(zmq.PULL)
-	if err := sock.Bind("tcp://*" + s.addr); err != nil {
-		return nil, errors.New(IP_BIND_FAILURE)
+	if s.terminate_code, err = GenerateUUID(); err != nil {
+		return nil, err
 	}
-	s.sock = sock
+
+	if s.sock, err = zmq.NewSocket(zmq.PULL); err != nil {
+		return nil, err
+	}
 
 	go s.monitorInbox()
 	go s.monitorOutbox()
 
-	return s, nil
+	return s, s.sock.Bind("tcp://" + s.addr)
 }
 
 // Sends an envelope to the peer with the provided peer id.
-func (s *Server) writeToServer(pid int, env *Envelope) {
-	sock, _ := zmq.NewSocket(zmq.PUSH)
-	defer sock.Close()
+func (s *Server) writeToServer(pid int, env *Envelope) error {
+	p, ok := s.peers[pid]
+	if !ok {
+		return fmt.Errorf("%s -- %s", INVALID_PEER_ID, pid)
+	}
 
 	env.Pid = s.pid
-
 	msg := new(bytes.Buffer)
-	enc := gob.NewEncoder(msg)
-	enc.Encode(env)
-	if p, ok := s.peers[pid]; !ok {
-		log.Printf("[?] Dropping outgoing envelope %s -- Pid not found.\n", msg)
-		return
-	} else {
-		if err := sock.Connect("tcp://localhost" + p.Addr); err != nil {
-			log.Printf("[!] Dropping outgoing envelope %s -- Could not connect to server [%d] @ %s.\n", msg, p.Pid, p.Addr)
-			log.Printf("[!]   Error = %s.\n", err.Error())
-			return
-		}
-	}
-	sock.SendBytes(msg.Bytes(), 0)
+	gob.NewEncoder(msg).Encode(env)
+	p.sock.SendBytes(msg.Bytes(), 0)
+
+	return nil
 }
 
 // Reads data from the server's socket and sends them to the provided channel.
-func (s *Server) readFromServer(dchan chan []byte) {
+func (s *Server) readFromServer(dchan chan []byte) error {
 	for {
 		if reply, err := s.sock.RecvBytes(0); err != nil {
-			log.Printf("[/] Error reading from socket of server [%d]. Stopping.\n", s.pid)
-			s.sock.Close()
-			s.stopped <- true
-			return
+			return err
 		} else if string(reply) == s.terminate_code {
 			s.sock.Close()
-			s.stopped <- true
-			return
+			s.stopped <- true // for s.Stop()
+			return nil
 		} else {
 			dchan <- reply
 		}
@@ -182,7 +182,7 @@ func (s *Server) monitorInbox() {
 			msg := bytes.NewBuffer(data)
 			dec := gob.NewDecoder(msg)
 			if err := dec.Decode(&envelope); err != nil {
-				log.Printf("[!] Dropping incoming envelope %s -- Could not unmarshal.\n", data)
+				log.Printf("%s -- %s.", UNMARSHAL_ERROR, data)
 			} else {
 				s.inbox <- &envelope
 			}
@@ -209,19 +209,22 @@ func (s *Server) monitorOutbox() {
 }
 
 // Stop function attempts to bring down an active server gracefully.
-func (s *Server) Stop() {
-	s.stop <- true
-	s.stop <- true
+func (s *Server) Stop() error {
+	s.stop <- true // for monitorInbox
+	s.stop <- true // for monitorOutbox
 
-	sock, _ := zmq.NewSocket(zmq.PUSH)
-	defer sock.Close()
-	if err := sock.Connect("tcp://localhost" + s.addr); err != nil {
-		log.Printf("[!] Looks like server [%d] has already closed it's socket.\n", s.pid)
-		return
+	sock, err := zmq.NewSocket(zmq.PUSH)
+	if err != nil {
+		return err
+	}
+	if err := sock.Connect("tcp://" + s.addr); err != nil {
+		return err
 	}
 
 	sock.Send(s.terminate_code, 0)
 	<-s.stopped
+
+	return sock.Close()
 }
 
 // Returns the Pid of the server in the cluster.
