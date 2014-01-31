@@ -47,7 +47,9 @@ func ClusterSetup(t *testing.T) []*Server {
 // Brings down a cluster consisting of the slice of servers provided.
 func ClusterTearDown(t *testing.T, servers []*Server) {
 	for _, server := range servers {
-		server.Stop()
+		if err := server.Stop(); err != nil {
+			t.Error(err)
+		}
 	}
 }
 

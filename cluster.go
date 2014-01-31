@@ -47,8 +47,8 @@ type ServerI interface {
 	Pid() int
 	Stop()
 	Peers() []int
-	Inbox() chan *Envelope
-	Outbox() chan *Envelope
+	Inbox() <-chan *Envelope
+	Outbox() chan<- *Envelope
 }
 
 // Server is an object that represents a single server in the cluster. This
@@ -113,10 +113,7 @@ func NewServer(id int, config string) (*Server, error) {
 			s.addr = p.Addr
 			continue
 		}
-		if p.sock, err = zmq.NewSocket(zmq.PUSH); err != nil {
-			return nil, err
-		}
-		p.sock.Connect("tcp://" + p.Addr)
+		p.sock = nil
 		s.peers[p.Pid] = p
 	}
 
@@ -147,7 +144,17 @@ func (s *Server) writeToServer(pid int, env *Envelope) error {
 
 	env.Pid = s.pid
 	msg := new(bytes.Buffer)
-	gob.NewEncoder(msg).Encode(env)
+	err := gob.NewEncoder(msg).Encode(env)
+	if err != nil {
+		return err
+	}
+
+	if p.sock == nil {
+		if p.sock, err = zmq.NewSocket(zmq.PUSH); err != nil {
+			return err
+		}
+		p.sock.Connect("tcp://" + p.Addr)
+	}
 	p.sock.SendBytes(msg.Bytes(), 0)
 
 	return nil
@@ -159,9 +166,9 @@ func (s *Server) readFromServer(dchan chan []byte) error {
 		if reply, err := s.sock.RecvBytes(0); err != nil {
 			return err
 		} else if string(reply) == s.terminate_code {
-			s.sock.Close()
+			err := s.sock.Close()
 			s.stopped <- true // for s.Stop()
-			return nil
+			return err
 		} else {
 			dchan <- reply
 		}
@@ -222,9 +229,14 @@ func (s *Server) Stop() error {
 	}
 
 	sock.Send(s.terminate_code, 0)
-	<-s.stopped
+	for _, p := range s.peers {
+		if p.sock != nil {
+			p.sock.Close()
+		}
+	}
 
-	return sock.Close()
+	<-s.stopped
+	return nil
 }
 
 // Returns the Pid of the server in the cluster.
@@ -242,11 +254,11 @@ func (s *Server) Peers() []int {
 }
 
 // Returns the inbox channel of the server.
-func (s *Server) Inbox() chan *Envelope {
+func (s *Server) Inbox() <-chan *Envelope {
 	return s.inbox
 }
 
 // Returns the outbox channel of the server.
-func (s *Server) Outbox() chan *Envelope {
+func (s *Server) Outbox() chan<- *Envelope {
 	return s.outbox
 }

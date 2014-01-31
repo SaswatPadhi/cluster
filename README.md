@@ -46,8 +46,8 @@ interface:
   + `Pid()` -- Gives the Pid of the Server.
   + `Stop()` -- Gracefully terminates the Server.
   + `Peers()` -- Exposes the Pid's of all other servers.
-  + `Inbox()` -- Returns a channel for reading incoming `Envelope`s
-  + `Outbox()` -- Returns a channel for writing outgoing `Envelope`s
+  + `Inbox()` -- Returns a channel for reading incoming `Envelope`s.
+  + `Outbox()` -- Returns a channel for writing outgoing `Envelope`s.
 
 An `Envelope` is the basic unit of communication in `cluster`:
 
