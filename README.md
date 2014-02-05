@@ -40,8 +40,7 @@ server := cluster.NewServer(3456543,     // Unique Pid for this server
 It is essential that this server should have an entry in the cluster
 configuration file.
 
-The `Server` object exposes a set of methods, specified by the `ServerI`
-interface:
+The `Server` object exposes the following set of methods:
 
   + `Pid()` -- Gives the Pid of the Server.
   + `Stop()` -- Gracefully terminates the Server.

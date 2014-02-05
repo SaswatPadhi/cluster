@@ -7,7 +7,6 @@ import (
 
 	"bytes"
 	"io"
-	"sort"
 	"testing"
 	"time"
 )
@@ -72,21 +71,28 @@ func Test_ClusterMultiSetupDestroy(t *testing.T) {
 //       is missing from the cluster configuration.
 func Test_ClusterBadInitialize(t *testing.T) {
 	servers := ClusterSetup(t)
-	pids := append(servers[0].Peers(), servers[0].Pid())
-	sort.Ints(pids)
-	bad_pid := pids[len(pids)-1] + 1
+	defer ClusterTearDown(t, servers)
+
+	bad_pid := servers[0].Pid()
+	for pid := range servers[0].Peers() {
+		if pid > bad_pid {
+			bad_pid = pid
+		}
+	}
+	bad_pid++
+
 	server, err := NewServer(bad_pid, CONFIG_FILE)
-	if (err == nil) != (server != nil) {
-		t.Errorf("[!] Inconsistent return values from Server.New()!\n", bad_pid, CONFIG_FILE)
-	} else if err == nil {
+	if err == nil {
 		t.Errorf("[!] Server creation with pid %d (missing in %s) was successful!\n", bad_pid, CONFIG_FILE)
 	}
-	ClusterTearDown(t, servers)
+
+	server.Stop()
 }
 
 // TEST: Checks if broadcast messages are correctly propagated.
 func Test_ClusterBroadcast(t *testing.T) {
 	servers := ClusterSetup(t)
+	defer ClusterTearDown(t, servers)
 
 	rand.Seed(101)
 	env_broadcast_1_id := rand.Intn(len(servers))
@@ -95,7 +101,7 @@ func Test_ClusterBroadcast(t *testing.T) {
 		t.Fatalf(err.Error())
 	}
 
-	env_expected_1 := Envelope{servers[env_broadcast_1_id].pid, 0, env_broadcast_1_msg}
+	env_expected_1 := Envelope{servers[env_broadcast_1_id].pid, 0, string(env_broadcast_1_msg)}
 	env_broadcast_1 := env_expected_1
 	env_broadcast_1.Pid = BROADCAST
 
@@ -105,7 +111,7 @@ func Test_ClusterBroadcast(t *testing.T) {
 		t.Fatalf(err.Error())
 	}
 
-	env_expected_2 := Envelope{servers[env_broadcast_2_id].pid, 0, env_broadcast_2_msg}
+	env_expected_2 := Envelope{servers[env_broadcast_2_id].pid, 0, string(env_broadcast_2_msg)}
 	env_broadcast_2 := env_expected_2
 	env_broadcast_2.Pid = BROADCAST
 
@@ -140,5 +146,4 @@ func Test_ClusterBroadcast(t *testing.T) {
 		}
 	}
 
-	ClusterTearDown(t, servers)
 }
