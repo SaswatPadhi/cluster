@@ -22,7 +22,7 @@ const (
 )
 
 // Peer holds an id and an associated address for another server in the cluster.
-type peer struct {
+type Peer struct {
 	Pid  int
 	Addr string
 	sock *zmq.Socket
@@ -33,7 +33,7 @@ type Server struct {
 	pid            int
 	addr           string
 	sock           *zmq.Socket
-	peers          map[int]peer
+	peers          map[int]Peer
 	inbox          chan *Envelope
 	outbox         chan *Envelope
 	stop           chan bool
@@ -44,9 +44,12 @@ type Server struct {
 // NewServer creates and returns a new Server object with the provided id and
 // the peers provided in the config file.
 func NewServer(id int, config string) (s *Server, err error) {
+	DBG_INFO.Println(fmt.Sprintf("Creating server [id: %d, config: %s]", id, config))
+	defer DBG_INFO.Println(fmt.Sprintf("Server creation returns [err: %s]", err))
+
 	s = &Server{}
 	s.pid = id
-	s.peers = make(map[int]peer)
+	s.peers = make(map[int]Peer)
 
 	s.stop = make(chan bool, 2)
 	s.inbox = make(chan *Envelope, 128)
@@ -54,15 +57,17 @@ func NewServer(id int, config string) (s *Server, err error) {
 
 	data, err := ioutil.ReadFile(config)
 	if err != nil {
+		DBG_EROR.Println(fmt.Sprintf("Error reading %s [err: %s]", config, err))
 		return
 	}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	for {
-		var p peer
+		var p Peer
 		if err = decoder.Decode(&p); err == io.EOF {
 			break
 		} else if err != nil {
+			DBG_EROR.Println(fmt.Sprintf("Error parsing json [err: %s]", err))
 			return
 		} else if p.Pid == s.pid {
 			s.addr = p.Addr
@@ -74,14 +79,17 @@ func NewServer(id int, config string) (s *Server, err error) {
 
 	if len(s.addr) == 0 {
 		err = fmt.Errorf(INVALID_SELF_ID)
+		DBG_EROR.Println(fmt.Sprintf("Error creating server [err: %s]", err))
 		return
 	}
 
 	if s.terminate_code, err = GenerateUUID(); err != nil {
+		DBG_EROR.Println(fmt.Sprintf("Error generating UUID [err: %s]", err))
 		return
 	}
 
 	if s.sock, err = zmq.NewSocket(zmq.PULL); err != nil {
+		DBG_EROR.Println(fmt.Sprintf("Error creation ZMQ socket [err: %s]", err))
 		return
 	}
 
@@ -90,36 +98,49 @@ func NewServer(id int, config string) (s *Server, err error) {
 	go s.monitorOutbox()
 
 	err = s.sock.Bind("tcp://" + s.addr)
+	if err != nil {
+		DBG_EROR.Println(fmt.Sprintf("Error binding socket [err: %s]", err))
+	}
 	return
 }
 
 // Sends an envelope to the peer with the provided peer id.
-func (s *Server) writeToServer(pid int, env *Envelope) error {
+func (s *Server) writeToServer(pid int, env *Envelope) (err error) {
+	DBG_INFO.Println(fmt.Sprintf("Sending envelope [from: %d, id: %d, env: %s]", s.pid, pid, env.toString()))
+	defer DBG_INFO.Println(fmt.Sprintf("Sending envelope returns [err: %s]", err))
+
 	p, ok := s.peers[pid]
 	if !ok {
-		return fmt.Errorf("%s -- %s", INVALID_PEER_ID, pid)
+		DBG_WARN.Println(fmt.Sprintf("Error sending envelope %s [err: Invalid Peer ID]", env.toString()))
+		err = fmt.Errorf("%s -- %s", INVALID_PEER_ID, pid)
+		return
 	}
 
 	env.Pid = s.pid
 	msg := new(bytes.Buffer)
-	err := gob.NewEncoder(msg).Encode(env)
+	err = gob.NewEncoder(msg).Encode(env)
 	if err != nil {
-		return err
+		DBG_WARN.Println(fmt.Sprintf("Error encoding envelope %s [err: %s]", env, err))
+		return
 	}
 
 	if p.sock == nil {
 		if p.sock, err = zmq.NewSocket(zmq.PUSH); err != nil {
-			return err
+			DBG_EROR.Println(fmt.Sprintf("Error creating ZMQ socket to send %s [err: %s]", env, err))
+			return
 		}
 		p.sock.Connect("tcp://" + p.Addr)
 	}
 	p.sock.SendBytes(msg.Bytes(), 0)
 
-	return nil
+	return
 }
 
 // Reads data from the server's socket and sends them to the provided channel.
-func (s *Server) readFromServer(dchan chan []byte) error {
+func (s *Server) readFromServer(dchan chan []byte) (err error) {
+	DBG_INFO.Println(fmt.Sprintf("Reading server channel [id: %d]", s.pid))
+	defer DBG_INFO.Println(fmt.Sprintf("Reading server channel returns [err: %s]", err))
+
 	for {
 		if reply, err := s.sock.RecvBytes(0); err != nil {
 			return err

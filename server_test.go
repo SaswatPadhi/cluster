@@ -25,7 +25,7 @@ func ClusterSetup(t *testing.T) []*Server {
 	servers := make([]*Server, 0, bytes.Count(data, []byte{10})+1)
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	for {
-		var p peer
+		var p Peer
 		if err := decoder.Decode(&p); err == io.EOF {
 			break
 		} else if err != nil {

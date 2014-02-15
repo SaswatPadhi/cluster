@@ -3,8 +3,29 @@ package cluster
 import (
 	"bytes"
 	"fmt"
+	"log"
 	"os"
 )
+
+type DBG_TYPE struct {
+	priority int8
+	name     string
+}
+
+var (
+	DBG_INFO = DBG_TYPE{0, "[INFO]"}
+	DBG_WARN = DBG_TYPE{1, "[WARN]"}
+	DBG_EROR = DBG_TYPE{2, "[EROR]"}
+	DBG_NONE = DBG_TYPE{3, "[NONE]"}
+
+	DBG_FLAG = DBG_EROR
+)
+
+func (DBG_LEVL DBG_TYPE) Println(a ...interface{}) {
+	if DBG_LEVL.priority >= DBG_FLAG.priority {
+		log.Println(DBG_LEVL.name, a)
+	}
+}
 
 // Generates a Version 4 (pseudo-random) UUID (Universally Unique Identifier).
 func GenerateUUID() ([]byte, error) {

@@ -1,6 +1,8 @@
 package cluster
 
-import ()
+import (
+	"fmt"
+)
 
 const (
 	// Envelope Pid for a broadcast message
@@ -16,4 +18,8 @@ type Envelope struct {
 	Pid   int
 	MsgId int64 //unused currently
 	Msg   interface{}
+}
+
+func (env *Envelope) toString() string {
+	return fmt.Sprintf("{Pid: %d, MsgId: %ld, Msg: %s}", env.Pid, env.MsgId, env.Msg)
 }
