@@ -3,20 +3,25 @@ package cluster
 import (
 	"encoding/json"
 	"io/ioutil"
-	"math/rand"
 
 	"bytes"
 	"io"
+	"reflect"
 	"testing"
 	"time"
 )
 
 const (
 	CONFIG_FILE = "cluster.json"
+
+	MSG_EXPECT_TIMEOUT   = 250
+	MSG_OVERFLOW_TIMEOUT = 50
 )
 
+/*=======================================< HELPER ROUTINES >=======================================*/
+
 // Brings up a cluster with server descriptions as specified in CONFIG_FILE.
-func ClusterSetup(t *testing.T) []*Server {
+func ClusterSetup(t *testing.T, do_start bool) []*Server {
 	data, err := ioutil.ReadFile(CONFIG_FILE)
 	if err != nil {
 		t.Fatal(err.Error())
@@ -40,11 +45,23 @@ func ClusterSetup(t *testing.T) []*Server {
 		}
 	}
 
+	if do_start {
+		ClusterStart(t, servers)
+	}
 	return servers
 }
 
-// Brings down a cluster consisting of the slice of servers provided.
-func ClusterTearDown(t *testing.T, servers []*Server) {
+// Starts a cluster consisting of the slice of servers provided.
+func ClusterStart(t *testing.T, servers []*Server) {
+	for _, server := range servers {
+		if err := server.Start(); err != nil {
+			t.Error(err)
+		}
+	}
+}
+
+// Stops a cluster consisting of the slice of servers provided.
+func ClusterStop(t *testing.T, servers []*Server) {
 	for _, server := range servers {
 		if err := server.Stop(); err != nil {
 			t.Error(err)
@@ -52,26 +69,87 @@ func ClusterTearDown(t *testing.T, servers []*Server) {
 	}
 }
 
+func CheckMessageFrom(msg interface{}, s_id int, r_id int, servers []*Server, res chan<- bool) {
+	select {
+	case env := <-servers[r_id].Inbox():
+		res <- (servers[s_id].pid == env.Pid && msg == env.Msg)
+	case <-time.After(MSG_EXPECT_TIMEOUT * time.Millisecond):
+		res <- false
+	}
+	close(res)
+}
+
+// Checks for broadcast from a particular server.
+func CheckBroadcastFrom(msg interface{}, s_id int, servers []*Server, res chan<- bool) {
+	all := true
+	left := -1
+	cases := make([]reflect.SelectCase, len(servers)-1)
+
+	servers[s_id].Outbox() <- &Envelope{
+		Pid:   -1,
+		MsgId: 0,
+		Msg:   msg,
+	}
+
+	for i, _ := range servers {
+		if i != s_id {
+			left++
+			ch := make(chan bool, 1)
+			go CheckMessageFrom(msg, s_id, i, servers, ch)
+			cases[left] = reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ch)}
+		}
+	}
+	left++
+	for left > 0 {
+		_, val, ok := reflect.Select(cases)
+		if ok {
+			res <- val.Bool()
+			all = all && val.Bool()
+		} else {
+			left--
+		}
+	}
+
+	res <- all
+	close(res)
+}
+
+/*========================================< TEST ROUTINES >========================================*/
+
 // TEST: Checks if a cluster could be brought up and down successfully.
 func Test_ClusterInitialize(t *testing.T) {
-	ClusterTearDown(t, ClusterSetup(t))
+	ClusterStop(t, ClusterSetup(t, true))
 }
 
 // TEST: Checks if the cluster configuration could be brought up and down
 //       multiple times. This might expose problems in cleanly tearing down
 //       a running cluster.
 func Test_ClusterMultiSetupDestroy(t *testing.T) {
-	ClusterTearDown(t, ClusterSetup(t))
-	ClusterTearDown(t, ClusterSetup(t))
-	ClusterTearDown(t, ClusterSetup(t))
+	ClusterStop(t, ClusterSetup(t, true))
+	ClusterStop(t, ClusterSetup(t, true))
+	ClusterStop(t, ClusterSetup(t, true))
+}
+
+// TEST: Checks if the same cluster could be reused.
+func Test_ClusterReuse(t *testing.T) {
+	servers := ClusterSetup(t, false)
+
+	ClusterStart(t, servers)
+	ClusterStop(t, servers)
+
+	ClusterStart(t, servers)
+	ClusterStop(t, servers)
+
+	ClusterStart(t, servers)
+	ClusterStop(t, servers)
 }
 
 // TEST: Checks if a cluster with bad configuration can be initialized.
 //       The only bad configuration we are checking now is if the server's id
 //       is missing from the cluster configuration.
 func Test_ClusterBadInitialize(t *testing.T) {
-	servers := ClusterSetup(t)
-	defer ClusterTearDown(t, servers)
+	servers := ClusterSetup(t, true)
+	defer ClusterStop(t, servers)
 
 	bad_pid := servers[0].Pid()
 	for pid := range servers[0].Peers() {
@@ -89,61 +167,46 @@ func Test_ClusterBadInitialize(t *testing.T) {
 	server.Stop()
 }
 
-// TEST: Checks if broadcast messages are correctly propagated.
+// TEST: A heavy broadcast test, broadcast from every server simultaneously.
 func Test_ClusterBroadcast(t *testing.T) {
-	servers := ClusterSetup(t)
-	defer ClusterTearDown(t, servers)
+	servers := ClusterSetup(t, true)
+	defer ClusterStop(t, servers)
 
-	rand.Seed(101)
-	env_broadcast_1_id := rand.Intn(len(servers))
-	env_broadcast_1_msg, err := GenerateUUID()
-	if err != nil {
-		t.Fatalf(err.Error())
+	left := len(servers)
+	chans := []chan bool{}
+	cases := make([]reflect.SelectCase, len(servers))
+	broadcast_from_results := make([]bool, len(servers))
+
+	// Setup the channels and cases
+	for id, _ := range servers {
+		ch := make(chan bool, len(servers))
+		chans = append(chans, ch)
+		cases[id] = reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ch)}
 	}
 
-	env_expected_1 := Envelope{servers[env_broadcast_1_id].pid, 0, string(env_broadcast_1_msg)}
-	env_broadcast_1 := env_expected_1
-	env_broadcast_1.Pid = BROADCAST
-
-	env_broadcast_2_id := rand.Intn(len(servers))
-	env_broadcast_2_msg, err := GenerateUUID()
-	if err != nil {
-		t.Fatalf(err.Error())
-	}
-
-	env_expected_2 := Envelope{servers[env_broadcast_2_id].pid, 0, string(env_broadcast_2_msg)}
-	env_broadcast_2 := env_expected_2
-	env_broadcast_2.Pid = BROADCAST
-
-	servers[env_broadcast_1_id].Outbox() <- &env_broadcast_1
-	servers[env_broadcast_2_id].Outbox() <- &env_broadcast_2
-
-	for _, server := range servers {
-		env_1_rvcd := server.pid == env_expected_1.Pid
-		env_2_rcvd := server.pid == env_expected_2.Pid
-
-		for !(env_1_rvcd && env_2_rcvd) {
-			select {
-			case envelope := <-server.Inbox():
-				if *envelope == env_expected_1 {
-					if !env_1_rvcd {
-						env_1_rvcd = true
-					} else {
-						t.Errorf("[!] Broadcast envelope %s was received more than once at server [%d].\n", envelope, server.pid)
-					}
-				} else if *envelope == env_expected_2 {
-					if !env_2_rcvd {
-						env_2_rcvd = true
-					} else {
-						t.Errorf("[!] Broadcast envelope %s was received more than once at server [%d].\n", envelope, server.pid)
-					}
-				} else {
-					t.Errorf("[!] Unexpected envelope %s was received at server [%d]!\n", envelope, server.pid)
-				}
-			case <-time.After(5 * time.Second):
-				t.Errorf("[!] Time out waiting for broadcast envelopes at server [%d]. Status = %t, %t.\n", server.pid, env_1_rvcd, env_2_rcvd)
+	// Asynchronously start broadcasts
+	go func() {
+		for id, _ := range servers {
+			if msg, err := GenerateUUID(); err != nil {
+				t.Error("[!] Failed to GenerateUUID().")
+			} else {
+				go CheckBroadcastFrom(string(msg), id, servers, chans[id])
+				<-time.After(MSG_OVERFLOW_TIMEOUT * time.Millisecond)
 			}
 		}
-	}
+	}()
 
+	// Check the results
+	for left > 0 {
+		ch_id, val, ok := reflect.Select(cases)
+		if ok {
+			broadcast_from_results[ch_id] = val.Bool()
+			if !val.Bool() {
+				t.Errorf("[!] Failed to verify broadcast message from %d at one of the servers.", ch_id)
+			}
+		} else if !ok {
+			//cases[ch_id].Chan = reflect.ValueOf(nil)
+			left--
+		}
+	}
 }

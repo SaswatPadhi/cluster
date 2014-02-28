@@ -7,23 +7,43 @@ import (
 	"os"
 )
 
-type DBG_TYPE struct {
+type set struct {
+	m map[interface{}]interface{}
+}
+
+func (s *set) insert(k interface{}) {
+	if s.m == nil {
+		s.clear()
+	}
+	s.m[k] = nil
+}
+
+func (s *set) clear() {
+	s.m = make(map[interface{}]interface{})
+}
+
+func (s *set) has(k interface{}) bool {
+	_, found := s.m[k]
+	return found
+}
+
+type LOG_TYPE struct {
 	priority int8
 	name     string
 }
 
 var (
-	DBG_INFO = DBG_TYPE{0, "[INFO]"}
-	DBG_WARN = DBG_TYPE{1, "[WARN]"}
-	DBG_EROR = DBG_TYPE{2, "[EROR]"}
-	DBG_NONE = DBG_TYPE{3, "[NONE]"}
+	INFO = LOG_TYPE{0, "[INFO]"}
+	WARN = LOG_TYPE{1, "[WARN]"}
+	EROR = LOG_TYPE{2, "[EROR]"}
+	NONE = LOG_TYPE{3, "[NONE]"}
 
-	DBG_FLAG = DBG_EROR
+	LOG_FLAG = EROR
 )
 
-func (DBG_LEVL DBG_TYPE) Println(a ...interface{}) {
-	if DBG_LEVL.priority >= DBG_FLAG.priority {
-		log.Println(DBG_LEVL.name, a)
+func (LOG_LEVL LOG_TYPE) Println(a ...interface{}) {
+	if LOG_LEVL.priority >= LOG_FLAG.priority {
+		log.Println(LOG_LEVL.name, a)
 	}
 }
 
