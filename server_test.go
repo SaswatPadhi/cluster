@@ -125,23 +125,19 @@ func Test_ClusterInitialize(t *testing.T) {
 //       multiple times. This might expose problems in cleanly tearing down
 //       a running cluster.
 func Test_ClusterMultiSetupDestroy(t *testing.T) {
-	ClusterStop(t, ClusterSetup(t, true))
-	ClusterStop(t, ClusterSetup(t, true))
-	ClusterStop(t, ClusterSetup(t, true))
+	for i := 0; i < 64; i++ {
+		ClusterStop(t, ClusterSetup(t, true))
+	}
 }
 
 // TEST: Checks if the same cluster could be reused.
 func Test_ClusterReuse(t *testing.T) {
 	servers := ClusterSetup(t, false)
 
-	ClusterStart(t, servers)
-	ClusterStop(t, servers)
-
-	ClusterStart(t, servers)
-	ClusterStop(t, servers)
-
-	ClusterStart(t, servers)
-	ClusterStop(t, servers)
+	for i := 0; i < 64; i++ {
+		ClusterStart(t, servers)
+		ClusterStop(t, servers)
+	}
 }
 
 // TEST: Checks if a cluster with bad configuration can be initialized.

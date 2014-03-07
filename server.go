@@ -146,11 +146,18 @@ func (s *Server) Start() (err error) {
 
 		if s.sock, err = zmq.NewSocket(zmq.PULL); err != nil {
 			EROR.Println(fmt.Sprintf("Error creation ZMQ socket [err: %s]", err))
+			s.state = ERROR
+			s.sock.Close()
+			s.sock = nil
 			return
 		}
 
 		if err = s.sock.Bind("tcp://" + s.addr); err != nil {
 			EROR.Println(fmt.Sprintf("Error binding socket of %d [err: %s]", s.pid, err))
+			s.state = ERROR
+			s.sock.Close()
+			s.sock = nil
+			return
 		}
 
 		go s.monitorInbox()
@@ -163,7 +170,7 @@ func (s *Server) Start() (err error) {
 func (s *Server) Stop() error {
 	INFO.Println("Stopping server", s.pid)
 
-	if s.state != STOPPED {
+	if s.state == RUNNING {
 		s.state = STOPPED
 
 		s.stop <- true // for monitorInbox
@@ -176,18 +183,20 @@ func (s *Server) Stop() error {
 		if err = sock.Connect("tcp://" + s.addr); err != nil {
 			return err
 		}
-
 		sock.SendBytes([]byte{1}, 0)
-
-		for _, p := range s.peers {
-			if p.sock != nil {
-				p.sock.Close()
-			}
-		}
 
 		<-s.stopped
 		sock.Close()
+		sock = nil
 	}
+
+	for _, p := range s.peers {
+		if p.sock != nil {
+			p.sock.Close()
+			p.sock = nil
+		}
+	}
+
 	return nil
 }
 
@@ -249,6 +258,8 @@ func (s *Server) readFromServer(dchan chan []byte) (err error) {
 			// Ignore the error, we are in a go-routine
 		} else if s.state == STOPPED {
 			s.sock.Close()
+			s.sock = nil
+
 			s.stopped <- true
 			return
 		} else {
