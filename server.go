@@ -152,6 +152,7 @@ func (s *Server) Start() (err error) {
 			return
 		}
 
+		s.sock.SetLinger(0)
 		if err = s.sock.Bind("tcp://" + s.addr); err != nil {
 			EROR.Println(fmt.Sprintf("Error binding socket of %d [err: %s]", s.pid, err))
 			s.state = ERROR
@@ -180,6 +181,7 @@ func (s *Server) Stop() error {
 		if err != nil {
 			return err
 		}
+		sock.SetLinger(0)
 		if err = sock.Connect("tcp://" + s.addr); err != nil {
 			return err
 		}
@@ -293,6 +295,7 @@ func (s *Server) writeToServer(pid int, env *Envelope) (err error) {
 			p.sock = nil
 			return
 		}
+		p.sock.SetLinger(0)
 		p.sock.Connect("tcp://" + p.Addr)
 	}
 	p.sock.SendBytes(msg.Bytes(), 0)
