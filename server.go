@@ -40,7 +40,7 @@ type Peer struct {
 type Server struct {
 	pid       int
 	state     int
-	blacklist set
+	blacklist Set
 	addr      string
 	sock      *zmq.Socket
 	peers     map[int]Peer
@@ -65,7 +65,7 @@ func NewServer(id int, config string) (s *Server, err error) {
 		state:     ERROR,
 		addr:      "",
 		sock:      nil,
-		blacklist: set{},
+		blacklist: Set{},
 		peers:     make(map[int]Peer),
 		inbox:     make(chan *Envelope, 16),
 		outbox:    make(chan *Envelope, 16),
@@ -107,10 +107,10 @@ func NewServer(id int, config string) (s *Server, err error) {
 }
 
 func (s *Server) Blacklist(bad_peers []int) {
-	s.blacklist.clear()
+	s.blacklist.Clear()
 	for peer := range bad_peers {
 		if peer < len(s.peers) {
-			s.blacklist.insert(peer)
+			s.blacklist.Insert(peer)
 		}
 	}
 }
@@ -220,7 +220,7 @@ func (s *Server) monitorInbox() {
 			dec := gob.NewDecoder(msg)
 			if err := dec.Decode(&envelope); err != nil {
 				EROR.Println("%s -- %s.", UNMARSHAL_ERROR, data)
-			} else if !s.blacklist.has(envelope.Pid) {
+			} else if !s.blacklist.Has(envelope.Pid) {
 				s.inbox <- &envelope
 			}
 		}
@@ -241,7 +241,7 @@ func (s *Server) monitorOutbox() {
 				go s.writeToServer(envelope.Pid, envelope)
 			} else {
 				for p := range s.peers {
-					if !s.blacklist.has(p) {
+					if !s.blacklist.Has(p) {
 						go s.writeToServer(p, envelope)
 					}
 				}

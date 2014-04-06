@@ -7,24 +7,28 @@ import (
 	"os"
 )
 
-type set struct {
+type Set struct {
 	m map[interface{}]interface{}
 }
 
-func (s *set) insert(k interface{}) {
+func (s *Set) Clear() {
+	s.m = make(map[interface{}]interface{})
+}
+
+func (s *Set) Has(k interface{}) bool {
+	_, found := s.m[k]
+	return found
+}
+
+func (s *Set) Insert(k interface{}) {
 	if s.m == nil {
-		s.clear()
+		s.Clear()
 	}
 	s.m[k] = nil
 }
 
-func (s *set) clear() {
-	s.m = make(map[interface{}]interface{})
-}
-
-func (s *set) has(k interface{}) bool {
-	_, found := s.m[k]
-	return found
+func (s *Set) Size() int {
+	return len(s.m)
 }
 
 type LOG_TYPE struct {

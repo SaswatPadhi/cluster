@@ -99,6 +99,7 @@ func CheckBroadcastFrom(msg interface{}, s_id int, servers []*Server, res chan<-
 			cases[left] = reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ch)}
 		}
 	}
+
 	left++
 	for left > 0 {
 		_, val, ok := reflect.Select(cases)
