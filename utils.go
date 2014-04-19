@@ -5,29 +5,47 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sync"
 )
 
-type Set struct {
+type set struct {
+	l *sync.RWMutex
 	m map[interface{}]interface{}
 }
 
-func (s *Set) Clear() {
+func NewSet() (s *set) {
+	return &set{
+		l: &sync.RWMutex{},
+		m: make(map[interface{}]interface{}),
+	}
+}
+
+func (s *set) Clear() {
+	s.l.Lock()
+	defer s.l.Unlock()
+
 	s.m = make(map[interface{}]interface{})
 }
 
-func (s *Set) Has(k interface{}) bool {
+func (s *set) Has(k interface{}) bool {
+	s.l.RLock()
+	defer s.l.RUnlock()
+
 	_, found := s.m[k]
 	return found
 }
 
-func (s *Set) Insert(k interface{}) {
-	if s.m == nil {
-		s.Clear()
-	}
+func (s *set) Insert(k interface{}) {
+	s.l.Lock()
+	defer s.l.Unlock()
+
 	s.m[k] = nil
 }
 
-func (s *Set) Size() int {
+func (s *set) Size() int {
+	s.l.RLock()
+	defer s.l.RUnlock()
+
 	return len(s.m)
 }
 

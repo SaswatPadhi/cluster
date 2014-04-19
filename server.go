@@ -40,7 +40,7 @@ type Peer struct {
 type Server struct {
 	pid       int
 	state     int
-	blacklist Set
+	blacklist *set
 	addr      string
 	sock      *zmq.Socket
 	peers     map[int]Peer
@@ -65,7 +65,7 @@ func NewServer(id int, config string) (s *Server, err error) {
 		state:     ERROR,
 		addr:      "",
 		sock:      nil,
-		blacklist: Set{},
+		blacklist: NewSet(),
 		peers:     make(map[int]Peer),
 		inbox:     make(chan *Envelope, 16),
 		outbox:    make(chan *Envelope, 16),
@@ -238,11 +238,11 @@ func (s *Server) monitorOutbox() {
 			return
 		case envelope := <-s.outbox:
 			if envelope.Pid != BROADCAST {
-				go s.writeToServer(envelope.Pid, envelope)
+				go s.writeToServer(envelope.Pid, *envelope)
 			} else {
 				for p := range s.peers {
 					if !s.blacklist.Has(p) {
-						go s.writeToServer(p, envelope)
+						go s.writeToServer(p, *envelope)
 					}
 				}
 			}
@@ -271,7 +271,7 @@ func (s *Server) readFromServer(dchan chan []byte) (err error) {
 }
 
 // Sends an envelope to the peer with the provided peer id.
-func (s *Server) writeToServer(pid int, env *Envelope) (err error) {
+func (s *Server) writeToServer(pid int, env Envelope) (err error) {
 	INFO.Println(fmt.Sprintf("Sending envelope [from: %d, id: %d, env: %s]", s.pid, pid, env.toString()))
 	defer INFO.Println(fmt.Sprintf("Sending envelope returns [err: %s]", err))
 
